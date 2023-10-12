@@ -155,14 +155,59 @@ module Arel # :nodoc: all
             collector << " FROM "
             collector = visit o.source, collector
           end
-
-          collect_nodes_for o.wheres, collector, " WHERE ", " AND "
+          wheres = optimize_wheres(o.wheres)
+          collect_nodes_for wheres, collector, " WHERE ", " AND "
           collect_nodes_for o.groups, collector, " GROUP BY "
           collect_nodes_for o.havings, collector, " HAVING ", " AND "
           collect_nodes_for o.windows, collector, " WINDOW "
 
           maybe_visit o.comment, collector
         end
+
+        def optimize_wheres(wheres)
+          return wheres unless ActiveRecord.optimize_where_in
+          return wheres if wheres.count == 0
+          wheres = wheres.map do |node|
+            next node unless node.class == Arel::Nodes::And
+            in_nodes = node.children.select { |n| n.respond_to?(:type) && n.type == :in }
+            other_nodes = node.children - in_nodes
+            duplicates = []
+            in_nodes.each do |where|
+              duplicate = in_nodes.find_all do |test|
+                test.attribute == where.attribute
+              end
+              duplicates << duplicate if duplicate.length > 1
+            end
+            non_duplicate_ins = in_nodes - duplicates.flatten
+            merged_ins = duplicates.map do |duplicate|
+              merged_values = duplicate.reduce {|a,b| a.values & b.values }
+              Arel::Nodes::HomogeneousIn.new(merged_values, duplicate.first.attribute, duplicate.first.type)
+            end.uniq
+            Arel::Nodes::And.new(other_nodes + non_duplicate_ins + merged_ins)
+          end
+          # figure out if some ins can be removed because there is a matching eq that contains one value from in
+          # wheres.map do |node|
+          #   next node unless node.class == Arel::Nodes::And
+          #   in_nodes = node.children.select { |n| n.respond_to?(:type) && n.type == :in }
+          #   eq_nodes = node.children.select { |n| n.class == Arel::Nodes::Equality }
+          #   other_nodes = node.children - in_nodes
+          #   debugger
+          #   matches = []
+          #   in_nodes.each do |where|
+          #     match = eq_nodes.find_all do |test|
+          #       test.attribute == where.attribute
+          #     end
+          #     matches << match if match.length > 1
+          #   end
+          #   non_matching_ins = in_nodes - matches.flatten
+          #   non_matching_eqs = eq_nodes - matches.flatten
+          #   merged = matches.map do |match|
+          #     merged_values = duplicate.reduce {|a,b| a.values & b.values }
+          #     Arel::Nodes::HomogeneousIn.new(merged_values, duplicate.first.attribute, duplicate.first.type)
+          #   end.uniq
+          #   Arel::Nodes::And.new(other_nodes + non_duplicate_ins + merged_ins)
+          # end
+        end 
 
         def visit_Arel_Nodes_OptimizerHints(o, collector)
           hints = o.expr.map { |v| sanitize_as_sql_comment(v) }.join(" ")

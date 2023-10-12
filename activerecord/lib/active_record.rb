@@ -454,6 +454,13 @@ module ActiveRecord
   singleton_class.attr_accessor :generate_secure_token_on
   self.generate_secure_token_on = :create
 
+  ##
+  # :singleton-method:
+  # Optimizes WHERE IN statements
+  # Defaults to <tt>false</tt>.
+  singleton_class.attr_accessor :optimize_where_in
+  self.optimize_where_in = false
+
   def self.marshalling_format_version
     Marshalling.format_version
   end
